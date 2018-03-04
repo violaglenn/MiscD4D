@@ -1,0 +1,163 @@
+---
+title: "NILC Analysis V1"
+author: "Viola Glenn, viola.glenn@gmail.com"
+date: "March 23, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Goal: Create some preliminary viz to address potential for disproportionate impact based on religion. Uses country list from 2nd Executive Order. Also utilizes data compiled by Amanda Alvarez at https://data.world/gecky/20020101-20170321-rpc-refugees.
+
+# Step 1: Call Libraries
+
+```{r packages, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(scales)
+```
+
+# Step 2: Load Data
+
+I don't have access to data.world at my machine because of file sharing restrictions. Instead I've downloaded the data and will pull it from my files. Also dropping many blank (all NA) rows that are imported with the file.
+
+```{r data, message=FALSE}
+RPC <- read_delim("C:/Users/vglenn/Documents/Misc/D4D/immigration-connect/RPC Vivek/Data/RPC_data.csv", 
+                       "\t", escape_double = FALSE, trim_ws = TRUE)
+
+```
+
+```{r data2}
+head(RPC)
+RPC<-na.omit(RPC)
+```
+
+# Step 3: Analysis Set-Up
+
+I pass R countries impacted by ban and group religions. EO1 refers to first executive order (including Iraq), while EO2 refers to the more recent action.
+
+(1) the list of countries impacted by the ban. Iraq is excluded as this focuses on the most recent version of the EO.
+(2) A crosswalk linking each reported religion to a category: Christian, Moslem, Unknown, No Religion, Other, and Unknown. I made this crosswalk myself using Wikipedia, so am completely open to suggestions on making it more accurate.
+
+```{r analysis, warning=FALSE}
+banned_EO1 <-c ('Iran','Libya','Somalia','Sudan','Syria','Yemen', 'Iraq')
+banned_EO2 <-c ('Iran','Libya','Somalia','Sudan','Syria','Yemen')
+
+#Add banned flag to master dataset
+RPC$banned_EO1 <- ifelse(RPC$Nationality %in% banned_EO1, "Banned", "Not Banned")
+RPC$banned_EO2 <- ifelse(RPC$Nationality %in% banned_EO2, "Banned", "Not Banned")
+
+#Create crosswalk
+all_relig <- c('Christian', 'Moslem', 'Unknown', 'Catholic', 'No Religion', 'Protestant',
+               'Pentecostalist', 'Moslem Suni', 'Evangelical Christian', 'Baptist', 
+               'Other Religion', 'Seventh Day Adventist', 'Jehovah Witness', 'Orthodox',
+               'Atheist', 'Jewish', 'Buddhist', 'Methodist', 'Bahai', 'Lutheran', 
+               'Moslem Shiite', 'Hindu', 'Ancestral Worship', 'Animist', 
+               'Russian Orthodox', 'Coptic', 'Greek Orthodox', 'Mennonite', 'Chaldean',
+               'Moslem Ismaici', 'Ukr Orthodox', 'Zoroastrian', 'Cao Dai', 
+               'Hare Krishna',"Kaaka'i", 'Kirat', 'Old Believer', 'Sabeans-Mandean',
+               'Uniate', 'Yazidi', 'Ahmadiyya', 'Drew', 'Hoa Hao', 
+               'Ukrainian Autocephalous Orthodox', 
+               'Ukrainian Orthodox Kyivan Patriarchate')
+
+big_categories <- c('Christian', 'Moslem', 'Unknown', 'Christian', 'No Religion', 
+                    'Christian', 'Christian', 'Moslem', 'Christian', 'Christian',
+                    'Other', 'Christian', 'Christian', 'Christian', 'No Religion',
+                    'Jewish', 'Other', 'Christian', 'Other', 'Christian', 'Moslem',
+                    'Other', 'Other', 'Other', 'Christian', 'Christian', 'Christian',
+                    'Christian', 'Christian', 'Moslem', 'Christian', 'Other', 'Other',
+                    'Other', 'Other', 'Other', 'Other', 'Other', 'Christian',
+                    'Other', 'Moslem', 'Other', 'Other', 'Christian', 'Christian')
+
+lookup <- data.frame(all_relig, big_categories)
+
+print(lookup)
+
+#Add religion categories to master dataset
+RPC <- left_join(RPC, lookup, by=c('Religion'='all_relig'))
+
+#Here's the distribution we're looking at:
+table(RPC$big_categories)
+```
+
+# Step 4: Some quick analysis
+
+Summarise percentage of refugees that would have been historically impacted, by religion.
+
+``` {r analysis2}
+#Sum by whether country is banned, year, and religion
+summary <- RPC %>%
+  group_by(banned_EO1, CalendarYear, big_categories) %>%
+  summarise(refugees = sum(NumRefugees))
+
+#Reformat for easier work
+summary <- spread(summary, banned_EO1, refugees)
+
+#Create percentage banned variable
+summary$percentage_banned_eo1 <- summary$Banned/(summary$`Not Banned`+summary$Banned)
+
+#A glimpse of where we stand now
+head(summary)
+
+#Same as above, but for EO2
+
+#Sum by whether country is banned, year, and religion
+summary2 <- RPC %>%
+  group_by(banned_EO2, CalendarYear, big_categories) %>%
+  summarise(refugees = sum(NumRefugees))
+
+#Reformat for easier work
+summary2 <- spread(summary2, banned_EO2, refugees)
+
+#Create percentage banned variable
+summary2$percentage_banned_eo2 <- summary2$Banned/(summary2$`Not Banned`+summary2$Banned)
+
+#Save output for EO1
+summary <- left_join(summary, summary2, by=c('CalendarYear', 'big_categories'))
+```
+
+# Step 5: Viz
+
+Create final viz to highlight refugee nationalities overtime as they relate to the EO.
+
+``` {r viz, warning = FALSE}
+#Order my levels as I'd like them displayed
+levels <- c('Moslem', 'Jewish', 'Other', 'Christian', 'No Religion', 'Unknown')
+summary$big_categories <- as.character(summary$big_categories)
+summary$big_categories <- factor(summary$big_categories, levels = levels)
+
+#Assign colors to levels to highlight areas of bigger impact
+colors <- c("#66A61E", '#D95F02', 'deepskyblue3', 'gray57','gray35' , 'gray71')
+names(colors) <- levels(as.factor(summary$big_categories))
+
+#Plot EO1
+ggplot(data = summary, aes(x = CalendarYear, y = percentage_banned_eo1, 
+                           color = as.factor(big_categories))) + 
+  geom_line(size = 1.25) + 
+  scale_color_manual(name = "Religion Category", values=colors) +
+  scale_x_continuous(breaks = 2002:2017) +
+  scale_y_continuous(labels = comma) +
+  labs(x = "Year", y = "Percent of All Refugees", 
+       title = "Percentage of Refugees from Banned Countries - EO1") +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14,face = "bold")) +
+  theme_bw()
+
+#Plot EO2
+ggplot(data = summary, aes(x = CalendarYear, y = percentage_banned_eo2, 
+                           color = as.factor(big_categories))) + 
+  geom_line(size = 1.25) + 
+  scale_color_manual(name = "Religion Category", values=colors) +
+  scale_x_continuous(breaks = 2002:2017) +
+  scale_y_continuous(labels = comma) +
+  labs(x = "Year", y = "Percent of All Refugees", 
+       title = "Percentage of Refugees from Banned Countries - EO2") +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14,face = "bold")) +
+  theme_bw()
